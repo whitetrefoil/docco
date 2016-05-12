@@ -192,10 +192,25 @@ Once all of the code has finished highlighting, we can **write** the resulting
 documentation file by passing the completed HTML sections into the template,
 and rendering it to the specified output path.
 
+Because I want the directory structure,
+I have to normalize the path separator before render it in HTML.
+Here's a very simple function to convert Win32 `\\` path separator into Posix format.
+
+    posixlize = (p) ->
+      if path.sep is '\\'
+        p.replace(/\\/g, '/')
+      else
+        p
+
     write = (source, sections, config) ->
 
       destination = (file) ->
-        path.join(config.output, path.basename(file, path.extname(file)) + '.html')
+        outputDir = if config.recursive
+          path.join(config.output, path.dirname(path.relative(config.basedir, file)))
+        else
+          config.output
+
+        path.join(outputDir, path.basename(file, path.extname(file)) + '.html')
 
 The **title** of the file is either the first heading in the prose, or the
 name of the source file.
@@ -206,10 +221,33 @@ name of the source file.
       hasTitle = first and first.type is 'heading' and first.depth is 1
       title = if hasTitle then first.text else path.basename source
 
-      html = config.template {sources: config.sources, css: path.basename(config.css),
-        title, hasTitle, sections, path, destination,}
+      currentFileDestination = destination(source)
+
+      html = config.template {
+        sources: config.sources,
+        css: path.basename(config.css),
+        dirname: path.dirname(currentFileDestination)
+        relativeBase: posixlize(
+          path.relative(
+            path.dirname(currentFileDestination),
+            config.output
+          )
+        )
+        relativeCss: posixlize(
+          path.relative(
+            path.dirname(currentFileDestination),
+            path.join(config.output, path.basename(config.css)
+            )
+          )
+        )
+        output: config.output,
+        currentDir: path.dirname(currentFileDestination),
+        destination, posixlize, basedir: config.basedir
+        title, hasTitle, sections, path,
+      }
 
       console.log "docco: #{source} -> #{destination source}"
+      fs.ensureDirSync path.dirname(destination(source))
       fs.writeFileSync destination(source), html
 
 
@@ -224,6 +262,8 @@ user-specified options.
       output:     'docs'
       template:   null
       css:        null
+      basedir:    null
+      recursive:  false
       extension:  null
       languages:  {}
       marked:     null
@@ -247,10 +287,16 @@ is only copied for the latter.
           console.warn "docco: no stylesheet file specified"
         config.layout = null
       else
-        dir = config.layout = path.join __dirname, 'resources', config.layout
+        dir = config.layout = path.join __dirname, 'resources',
+          if config.recursive
+            "recursive-#{config.layout}"
+          else
+            config.layout
         config.public       = path.join dir, 'public' if fs.existsSync path.join dir, 'public'
         config.template     = path.join dir, 'docco.jst'
         config.css          = options.css or path.join dir, 'docco.css'
+
+      config.basedir  = path.resolve process.cwd(), options.basedir or '.'
       config.template = _.template fs.readFileSync(config.template).toString()
 
       if options.marked
@@ -330,6 +376,8 @@ Parse options using [Commander](https://github.com/visionmedia/commander.js).
         .option('-l, --layout [name]',    'choose a layout (parallel, linear or classic)', c.layout)
         .option('-o, --output [path]',    'output to a given folder', c.output)
         .option('-c, --css [file]',       'use a custom css file', c.css)
+        .option('-b, --basedir [path]',   'base dir relative to, default is current', c.basedir)
+        .option('-r, --recursive',        'use recursive templates instead of default flatten ones', c.recursive)
         .option('-t, --template [file]',  'use a custom .jst template', c.template)
         .option('-e, --extension [ext]',  'assume a file extension for all inputs', c.extension)
         .option('-m, --marked [file]',    'use custom marked options', c.marked)
